@@ -177,7 +177,7 @@ pub unsafe fn unmap_lv2_page(
     root: PageRoot,
     start: VirtLv2PageAddress,
     number_of_pages: u64,
-) -> Result<Vec<PhysLv1PageAddress>, PagingErros> {
+) -> Result<Vec<PhysLv2PageAddress>, PagingErros> {
     arch::paging::unmap_lv2_page(root, start, number_of_pages)
 }
 
@@ -188,7 +188,7 @@ pub unsafe fn unmap_lv3_page(
     root: PageRoot,
     start: VirtLv3PageAddress,
     number_of_pages: u64,
-) -> Result<Vec<PhysLv1PageAddress>, PagingErros> {
+) -> Result<Vec<PhysLv3PageAddress>, PagingErros> {
     arch::paging::unmap_lv3_page(root, start, number_of_pages)
 }
 
