@@ -1,8 +1,7 @@
 #![no_std] // don't link the Rust standard library
 #![no_main] // disable all Rust-level entry points
 #![allow(dead_code)]
-#![feature(abi_x86_interrupt, inline_const)]
-#![feature(associated_type_bounds)]
+#![feature(abi_x86_interrupt)]
 #![feature(allocator_api)]
 #![feature(btreemap_alloc)]
 #![feature(let_chains)]
