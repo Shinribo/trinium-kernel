@@ -172,28 +172,19 @@ pub(in crate::hal) fn needed_pt_pages_lv3(
 fn decode_virtual_address(
     address: VirtAddress,
 ) -> (
-    PMLEntryIndex,
-    PMLEntryIndex,
-    PMLEntryIndex,
-    PMLEntryIndex,
-    PMLEntryIndex,
+    u16,
+    u16,
+    u16,
+    u16,
+    u16,
 ) {
     (
-        PMLEntryIndex {
-            index: ((address.get_u64() & PML5ENTRYINDEXMASK) >> 48),
-        },
-        PMLEntryIndex {
-            index: ((address.get_u64() & PML4ENTRYINDEXMASK) >> 39),
-        },
-        PMLEntryIndex {
-            index: ((address.get_u64() & PML3ENTRYINDEXMASK) >> 30),
-        },
-        PMLEntryIndex {
-            index: ((address.get_u64() & PML2ENTRYINDEXMASK) >> 21),
-        },
-        PMLEntryIndex {
-            index: ((address.get_u64() & PML1ENTRYINDEXMASK) >> 12),
-        },
+        ((address.get_u64() >> 48) & 0x1FF) as u16,
+        ((address.get_u64() >> 39) & 0x1FF) as u16,
+        ((address.get_u64() >> 30) & 0x1FF) as u16,
+        ((address.get_u64() >> 21) & 0x1FF) as u16,
+        ((address.get_u64() >> 12) & 0x1FF) as u16,
+
     )
 }
 
@@ -245,98 +236,361 @@ pub struct ArchPageRoot {
     address: PhysLv1PageAddress,
 }
 
-mod pml_root {}
 
-mod pml5 {
+mod pml4_5 {
 
+    use super::{
+        PhysLv1PageAddress, ACCESSED_BIT, PRESENT_BIT, READ_WRITE_BIT, USER_SUPERVISOR_BIT, VALID_BIT
+    };
+    use bit_field::BitField;
+
+
+    pub(in crate::hal::arch::paging) fn read_page(
+        page_level_base_address: PhysLv1PageAddress, index: u16
+    ) -> Option<PhysLv1PageAddress> {
+
+        let page_entry: u64 = unsafe { 
+            page_level_base_address.get_address().offset_unchecked::<u64>(index.into()).read_unchecked()
+        };
+
+        if page_entry.get_bit(VALID_BIT) {
+            return Some(PhysLv1PageAddress::new_maskoff(page_entry));
+        } else {
+            return None;
+        }
+
+    }
+
+    ///Returns Accessed
+    pub(in crate::hal::arch::paging) fn read_page_flag(page_level_base_address: PhysLv1PageAddress, index: u16) -> Option<bool> {
+
+        let page_entry: u64 = unsafe { 
+            page_level_base_address.get_address().offset_unchecked::<u64>(index.into()).read_unchecked()
+        };
+
+        if page_entry.get_bit(VALID_BIT) {
+            
+            return Some(page_entry.get_bit(ACCESSED_BIT));
+
+        } else {
+            return None;
+        }
+
+    }
+
+    pub(in crate::hal::arch::paging) unsafe fn write_page_pml3_4(
+        page_level_base_address: PhysLv1PageAddress, 
+        index: u16,
+        pml3_4_base_address: PhysLv1PageAddress,
+    ) {
+
+        let mut page_entry: u64 = 0;
+
+        page_entry.set_bit(PRESENT_BIT, true);
+        page_entry.set_bit(READ_WRITE_BIT, true);
+        page_entry.set_bit(USER_SUPERVISOR_BIT, true);
+        page_entry.set_bit(VALID_BIT, true);
+
+        page_entry = page_entry | pml3_4_base_address.get_address().get_u64();
+
+        page_level_base_address.get_address().offset_unchecked::<u64>(index.into()).write_unchecked::<u64>(&page_entry);
+
+
+    }
+
+
+    ///Sets the page to 0
+    ///Unmaps the page for the software paging system
+    pub(in crate::hal::arch::paging) unsafe fn unmap_page(page_level_base_address: PhysLv1PageAddress, index: u16) {
+        page_level_base_address.get_address().offset_unchecked::<u64>(index.into()).write_unchecked::<u64>(&0);
+    }
     
-    compile_error!("TODO");
-
-    //getpml3(index: EntryIndex)
-    //setpml3(index: EntryIndex)
-}
-
-mod pml4 {
-
-    
-
-    compile_error!("TODO");
-
-    //getpml3(index: EntryIndex)
-    //setpml3(index: EntryIndex)
 }
 
 mod pml3 {
 
+    use super::{
+        decode_caching_bits, encode_caching_bits, PhysLv1PageAddress, PhysLv3PageAddress, ACCESSED_BIT, DIRTY_BIT, GLOBAL_BIT, NO_EXECUTE_BIT, PAGE_LEVEL_CACHE_DISABLE_BIT, PAGE_LEVEL_WRITETHROUGH_BIT, PRESENT_BIT, READ_WRITE_BIT, USER_SUPERVISOR_BIT, VALID_BIT
+    };
+    use crate::hal::paging::PageAttributes;
+    use bit_field::BitField;
+
+    const LARGE_PAGE_BIT: usize = 7;
+    const PAGE_ATTRIBUTE_TABLE_BIT: usize = 12;
+
+    pub enum Pml2Or1G {
+        Pml2(PhysLv1PageAddress),
+        G1(PageAttributes, PhysLv3PageAddress),
+    }
+
+    pub(in crate::hal::arch::paging) fn read_page(
+        page_level_base_address: PhysLv1PageAddress, index: u16
+    ) -> Option<Pml2Or1G> {
+
+        let page_entry: u64 = unsafe { 
+            page_level_base_address.get_address().offset_unchecked::<u64>(index.into()).read_unchecked()
+        };
+
+        if page_entry.get_bit(VALID_BIT) {
+            
+            if page_entry.get_bit(LARGE_PAGE_BIT) {
+                //1G Page
+                return Some(Pml2Or1G::G1(
+                    PageAttributes {
+                        present: page_entry.get_bit(PRESENT_BIT),
+                        readonly: !page_entry.get_bit(READ_WRITE_BIT),
+                        executable: !page_entry.get_bit(NO_EXECUTE_BIT),
+                        supervisor: !page_entry.get_bit(USER_SUPERVISOR_BIT),
+                        global: page_entry.get_bit(GLOBAL_BIT),
+                        caching_mode: decode_caching_bits(
+                            page_entry.get_bit(PAGE_LEVEL_WRITETHROUGH_BIT),
+                            page_entry.get_bit(PAGE_LEVEL_CACHE_DISABLE_BIT),
+                            page_entry.get_bit(PAGE_ATTRIBUTE_TABLE_BIT),
+                        ),
+                    },
+                    PhysLv3PageAddress::new_maskoff(page_entry),
+                ));
+
+            } else {
+                //Points to PML2
+                return Some(
+                    Pml2Or1G::Pml2(
+                        PhysLv1PageAddress::new_maskoff(page_entry)
+                    )
+                );
+
+            }
+
+        } else {
+            return None;
+        }
+
+    }
+
+
+    ///Returns (Accessed, Dirty&LARGE_PAGE_BIT)
+    pub(in crate::hal::arch::paging) fn read_page_flags(page_level_base_address: PhysLv1PageAddress, index: u16) -> Option<(bool, bool)> {
+
+        let page_entry: u64 = unsafe { 
+            page_level_base_address.get_address().offset_unchecked::<u64>(index.into()).read_unchecked()
+        };
+
+        if page_entry.get_bit(VALID_BIT) {
+            return Some((
+                page_entry.get_bit(ACCESSED_BIT),
+                page_entry.get_bit(DIRTY_BIT) & page_entry.get_bit(LARGE_PAGE_BIT),
+            ));
+        } else {
+            return None;
+        }
+    }
+
+    pub(in crate::hal::arch::paging) unsafe fn write_page_pml2(
+        page_level_base_address: PhysLv1PageAddress, 
+        index: u16,
+        pml2_base_address: PhysLv1PageAddress,
+    ) {
+
+        let mut page_entry: u64 = 0;
+
+        page_entry.set_bit(PRESENT_BIT, true);
+        page_entry.set_bit(READ_WRITE_BIT, true);
+        page_entry.set_bit(USER_SUPERVISOR_BIT, true);
+        page_entry.set_bit(VALID_BIT, true);
+
+        page_entry = page_entry | pml2_base_address.get_address().get_u64();
+
+        page_level_base_address.get_address().offset_unchecked::<u64>(index.into()).write_unchecked::<u64>(&page_entry);
+
+    }
+
+    pub(in crate::hal::arch::paging) unsafe fn write_page_1g(
+        page_level_base_address: PhysLv1PageAddress, 
+        index: u16,
+        attributes: PageAttributes,
+        phys_address: PhysLv3PageAddress,
+    ) {
+
+        let mut page_entry: u64 = 0;
+        page_entry.set_bit(VALID_BIT, true);
+        page_entry.set_bit(PRESENT_BIT, attributes.present);
+        page_entry.set_bit(READ_WRITE_BIT, !attributes.readonly);
+        page_entry.set_bit(NO_EXECUTE_BIT, !attributes.executable);
+        page_entry.set_bit(USER_SUPERVISOR_BIT, !attributes.supervisor);
+        page_entry.set_bit(GLOBAL_BIT, attributes.global);
+        page_entry.set_bit(LARGE_PAGE_BIT, true);
+
+        let caching: (bool, bool, bool) = encode_caching_bits(attributes.caching_mode);
+
+        page_entry.set_bit(PAGE_LEVEL_WRITETHROUGH_BIT, caching.0);
+        page_entry.set_bit(PAGE_LEVEL_CACHE_DISABLE_BIT, caching.1);
+        page_entry.set_bit(PAGE_ATTRIBUTE_TABLE_BIT, caching.2);
+
+        page_entry = page_entry | phys_address.get_address().get_u64();
+
+        page_level_base_address.get_address().offset_unchecked::<u64>(index.into()).write_unchecked::<u64>(&page_entry);
+
+    }
+
+    ///Sets the page to 0
+    ///Unmaps the page for the software paging system
+    pub(in crate::hal::arch::paging) unsafe fn unmap_page(page_level_base_address: PhysLv1PageAddress, index: u16) {
+        page_level_base_address.get_address().offset_unchecked::<u64>(index.into()).write_unchecked::<u64>(&0);
+    }
+
     
-
-    compile_error!("TODO");
-
-    //getpml2orlv3page(index: EntryIndex)
-    //setpml2(index: EntryIndex)
-    //setlv3page(index: EntryIndex)
 }
 
 mod pml2 {
-    use core::ptr::NonNull;
 
-    use volatile::VolatilePtr;
-
+    use super::{
+        decode_caching_bits, encode_caching_bits, PhysLv1PageAddress, PhysLv2PageAddress, ACCESSED_BIT, DIRTY_BIT, GLOBAL_BIT, NO_EXECUTE_BIT, PAGE_LEVEL_CACHE_DISABLE_BIT, PAGE_LEVEL_WRITETHROUGH_BIT, PRESENT_BIT, READ_WRITE_BIT, USER_SUPERVISOR_BIT, VALID_BIT
+    };
     use crate::hal::paging::PageAttributes;
+    use bit_field::BitField;
 
-    use super::{pml1::Pml1Page, PhysLv1PageAddress, VirtLv1PageAddress};
-
-    pub struct Pml2Page {
-        pub start: VirtLv1PageAddress,
-    }
+    const LARGE_PAGE_BIT: usize = 7;
+    const PAGE_ATTRIBUTE_TABLE_BIT: usize = 12;
 
     pub enum Pml1Or2M {
-        None,
-        Pml1(Pml1Page),
-        MB2(PageAttributes, PhysLv1PageAddress),
+        Pml1(PhysLv1PageAddress),
+        MB2(PageAttributes, PhysLv2PageAddress),
     }
 
-    compile_error!("TODO");
+    pub(in crate::hal::arch::paging) fn read_page(
+        page_level_base_address: PhysLv1PageAddress, index: u16
+    ) -> Option<Pml1Or2M> {
 
-    ///Unsafe: dont use a invalid EntryIndex
-    pub unsafe fn getpml1orlv2page(ptr: Pml2Page, index: EntryIndex) -> Pml1Or2M {
-        let entry: u64 = unsafe {
-            VolatilePtr::new(NonNull::new_unchecked(
-                (ptr.start.get_address().get_u64() as *mut u64).offset(index.index as isize),
-            ))
-            .read()
+        let page_entry: u64 = unsafe { 
+            page_level_base_address.get_address().offset_unchecked::<u64>(index.into()).read_unchecked()
         };
+
+        if page_entry.get_bit(VALID_BIT) {
+            
+            if page_entry.get_bit(LARGE_PAGE_BIT) {
+                //2MB Page
+                return Some(Pml1Or2M::MB2(
+                    PageAttributes {
+                        present: page_entry.get_bit(PRESENT_BIT),
+                        readonly: !page_entry.get_bit(READ_WRITE_BIT),
+                        executable: !page_entry.get_bit(NO_EXECUTE_BIT),
+                        supervisor: !page_entry.get_bit(USER_SUPERVISOR_BIT),
+                        global: page_entry.get_bit(GLOBAL_BIT),
+                        caching_mode: decode_caching_bits(
+                            page_entry.get_bit(PAGE_LEVEL_WRITETHROUGH_BIT),
+                            page_entry.get_bit(PAGE_LEVEL_CACHE_DISABLE_BIT),
+                            page_entry.get_bit(PAGE_ATTRIBUTE_TABLE_BIT),
+                        ),
+                    },
+                    PhysLv2PageAddress::new_maskoff(page_entry),
+                ));
+
+            } else {
+                //Points to PML1
+                return Some(
+                    Pml1Or2M::Pml1(
+                        PhysLv1PageAddress::new_maskoff(page_entry)
+                    )
+                );
+
+            }
+
+        } else {
+            return None;
+        }
+
     }
-    //setpml1(index: EntryIndex)
-    //setlv2page(index: EntryIndex)
+
+
+    ///Returns (Accessed, Dirty&LARGE_PAGE_BIT)
+    pub(in crate::hal::arch::paging) fn read_page_flags(page_level_base_address: PhysLv1PageAddress, index: u16) -> Option<(bool, bool)> {
+
+        let page_entry: u64 = unsafe { 
+            page_level_base_address.get_address().offset_unchecked::<u64>(index.into()).read_unchecked()
+        };
+
+        if page_entry.get_bit(VALID_BIT) {
+            return Some((
+                page_entry.get_bit(ACCESSED_BIT),
+                page_entry.get_bit(DIRTY_BIT) & page_entry.get_bit(LARGE_PAGE_BIT),
+            ));
+        } else {
+            return None;
+        }
+    }
+
+    pub(in crate::hal::arch::paging) unsafe fn write_page_pml1(
+        page_level_base_address: PhysLv1PageAddress, 
+        index: u16,
+        pml1_base_address: PhysLv1PageAddress,
+    ) {
+
+        let mut page_entry: u64 = 0;
+
+        page_entry.set_bit(PRESENT_BIT, true);
+        page_entry.set_bit(READ_WRITE_BIT, true);
+        page_entry.set_bit(USER_SUPERVISOR_BIT, true);
+        page_entry.set_bit(VALID_BIT, true);
+
+        page_entry = page_entry | pml1_base_address.get_address().get_u64();
+
+        page_level_base_address.get_address().offset_unchecked::<u64>(index.into()).write_unchecked::<u64>(&page_entry);
+
+    }
+
+    pub(in crate::hal::arch::paging) unsafe fn write_page_2mb(
+        page_level_base_address: PhysLv1PageAddress, 
+        index: u16,
+        attributes: PageAttributes,
+        phys_address: PhysLv2PageAddress,
+    ) {
+
+        let mut page_entry: u64 = 0;
+        page_entry.set_bit(VALID_BIT, true);
+        page_entry.set_bit(PRESENT_BIT, attributes.present);
+        page_entry.set_bit(READ_WRITE_BIT, !attributes.readonly);
+        page_entry.set_bit(NO_EXECUTE_BIT, !attributes.executable);
+        page_entry.set_bit(USER_SUPERVISOR_BIT, !attributes.supervisor);
+        page_entry.set_bit(GLOBAL_BIT, attributes.global);
+        page_entry.set_bit(LARGE_PAGE_BIT, true);
+
+        let caching: (bool, bool, bool) = encode_caching_bits(attributes.caching_mode);
+
+        page_entry.set_bit(PAGE_LEVEL_WRITETHROUGH_BIT, caching.0);
+        page_entry.set_bit(PAGE_LEVEL_CACHE_DISABLE_BIT, caching.1);
+        page_entry.set_bit(PAGE_ATTRIBUTE_TABLE_BIT, caching.2);
+
+        page_entry = page_entry | phys_address.get_address().get_u64();
+
+        page_level_base_address.get_address().offset_unchecked::<u64>(index.into()).write_unchecked::<u64>(&page_entry);
+
+    }
+
+    ///Sets the page to 0
+    ///Unmaps the page for the software paging system
+    pub(in crate::hal::arch::paging) unsafe fn unmap_page(page_level_base_address: PhysLv1PageAddress, index: u16) {
+        page_level_base_address.get_address().offset_unchecked::<u64>(index.into()).write_unchecked::<u64>(&0);
+    }
+
 }
 
 mod pml1 {
 
-    use core::mem::size_of;
-
     use super::{
-        decode_caching_bits, encode_caching_bits, PMLEntryIndex, PhysLv1PageAddress, VirtAddress, ACCESSED_BIT, DEFAULTPHYSADDRESSMASK, DIRTY_BIT, GLOBAL_BIT, NO_EXECUTE_BIT, PAGE_LEVEL_CACHE_DISABLE_BIT, PAGE_LEVEL_WRITETHROUGH_BIT, PRESENT_BIT, READ_WRITE_BIT, USER_SUPERVISOR_BIT, VALID_BIT
+        decode_caching_bits, encode_caching_bits, PhysLv1PageAddress, ACCESSED_BIT, DIRTY_BIT, GLOBAL_BIT, NO_EXECUTE_BIT, PAGE_LEVEL_CACHE_DISABLE_BIT, PAGE_LEVEL_WRITETHROUGH_BIT, PRESENT_BIT, READ_WRITE_BIT, USER_SUPERVISOR_BIT, VALID_BIT
     };
     use crate::hal::paging::PageAttributes;
     use bit_field::BitField;
 
     const PAGE_ATTRIBUTE_TABLE_BIT: usize = 7;
 
-    pub struct Pml1Page {
-        pub base_address: PhysLv1PageAddress,
-    }
-
     pub(in crate::hal::arch::paging) fn read_page(
-        ptr: Pml1Page, index: PMLEntryIndex
+        page_level_base_address: PhysLv1PageAddress, index: u16
     ) -> Option<(PageAttributes, PhysLv1PageAddress)> {
-        let page_entry: u64 = unsafe { 
-            
-            VirtAddress::new_unchecked(
-                ptr.base_address.get_address().get_u64() + (size_of::<u64>() as u64 * index.get_index())
-            ).read::<u64>()
 
-         };
+        let page_entry: u64 = unsafe { 
+            page_level_base_address.get_address().offset_unchecked::<u64>(index.into()).read_unchecked()
+        };
 
         if page_entry.get_bit(VALID_BIT) {
             return Some((
@@ -352,16 +606,19 @@ mod pml1 {
                         page_entry.get_bit(PAGE_ATTRIBUTE_TABLE_BIT),
                     ),
                 },
-                unsafe { PhysLv1PageAddress::new_unchecked(page_entry & DEFAULTPHYSADDRESSMASK) },
+                PhysLv1PageAddress::new_maskoff(page_entry),
             ));
         } else {
             return None;
         }
     }
 
-    ///Return (Accessed, Dirty)
-    pub(in crate::hal::arch::paging) fn read_page_flags(ptr: Pml1Page) -> Option<(bool, bool)> {
-        let page_entry: u64 = unsafe { ptr.start.read::<u64>() };
+    ///Returns (Accessed, Dirty)
+    pub(in crate::hal::arch::paging) fn read_page_flags(page_level_base_address: PhysLv1PageAddress, index: u16) -> Option<(bool, bool)> {
+
+        let page_entry: u64 = unsafe { 
+            page_level_base_address.get_address().offset_unchecked::<u64>(index.into()).read_unchecked()
+        };
 
         if page_entry.get_bit(VALID_BIT) {
             return Some((
@@ -374,7 +631,8 @@ mod pml1 {
     }
 
     pub(in crate::hal::arch::paging) unsafe fn write_page(
-        ptr: Pml1Page,
+        page_level_base_address: PhysLv1PageAddress, 
+        index: u16,
         attributes: PageAttributes,
         phys_address: PhysLv1PageAddress,
     ) {
@@ -394,11 +652,13 @@ mod pml1 {
 
         page_entry = page_entry | phys_address.get_address().get_u64();
 
-        unsafe { ptr.start.write::<u64>(&page_entry) }
+        page_level_base_address.get_address().offset_unchecked::<u64>(index.into()).write_unchecked::<u64>(&page_entry);
+
     }
 
     ///Sets the page to 0
-    pub(in crate::hal::arch::paging) unsafe fn unmap_page(ptr: Pml1Page) {
-        ptr.start.write::<u64>(&0)
+    ///Unmaps the page for the software paging system
+    pub(in crate::hal::arch::paging) unsafe fn unmap_page(page_level_base_address: PhysLv1PageAddress, index: u16) {
+        page_level_base_address.get_address().offset_unchecked::<u64>(index.into()).write_unchecked::<u64>(&0);
     }
 }

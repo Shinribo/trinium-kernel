@@ -9,6 +9,7 @@ use lazy_static::lazy_static;
 
 use crate::bal::hhdm::HHDM_OFFSET;
 
+#[derive(Debug)]
 pub enum MemoryAddressErrors {
     NonCannonical,
     InvalidBits,
@@ -487,7 +488,7 @@ impl PhysLv2PageAddress {
         })
     }
 
-    //masks of unsupported bits
+    ///masks of unsupported bits
     #[inline]
     pub fn new_maskoff(value: u64) -> Self {
         Self {
@@ -1089,7 +1090,9 @@ impl VirtLv3PageAddress {
     }
 }
 
+/* 
 ///General Purpose Optimized Memory Functions for larger Memory Operations
+
 pub mod utility {
     use core::mem::size_of;
 
@@ -1133,3 +1136,4 @@ pub mod utility {
         //arch::memory::memcpy()
     }
 }
+    */
