@@ -1,6 +1,6 @@
 
 [build]
-target = ["x86_64-unknown-nunix-kernel.json"]
+target = ["x86_64-unknown-trinium-kernel.json"]
 
 [release]
 overflow-check = true
