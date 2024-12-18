@@ -15,7 +15,7 @@ pub enum MemoryAddressErrors {
     InvalidBits,
     NULLPTR,
     Invalid,
-    OutOfBounds
+    OutOfBounds,
 }
 
 //Set Bits are allowed to be used
@@ -29,6 +29,7 @@ lazy_static! {
 ///Ensures that plattform Constrains are fullfilled (for example max 52bit on x86_64)
 /// NOTE: This Ptr can be NULL as Physical Address Space doesnt have a meaning for NULL
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
+#[repr(transparent)]
 pub struct PhysAddress {
     address: u64,
 }
@@ -64,18 +65,29 @@ impl PhysAddress {
 
     #[inline]
     pub fn offset<T>(&self, count: i64) -> Result<Self, MemoryAddressErrors> {
-        Self::new(self.get_u64().checked_add_signed(size_of::<T>() as i64 * count).ok_or(MemoryAddressErrors::OutOfBounds)?)
+        Self::new(
+            self.get_u64()
+                .checked_add_signed(size_of::<T>() as i64 * count)
+                .ok_or(MemoryAddressErrors::OutOfBounds)?,
+        )
     }
 
     #[inline]
     pub fn offset_maskoff<T>(&self, count: i64) -> Result<Self, MemoryAddressErrors> {
-        Ok(Self::new_maskoff(self.get_u64().checked_add_signed(size_of::<T>() as i64 * count).ok_or(MemoryAddressErrors::OutOfBounds)?))
+        Ok(Self::new_maskoff(
+            self.get_u64()
+                .checked_add_signed(size_of::<T>() as i64 * count)
+                .ok_or(MemoryAddressErrors::OutOfBounds)?,
+        ))
     }
 
     ///Caller has to ensure that the new address fullfills platform address space constrains
     #[inline]
     pub unsafe fn offset_unchecked<T>(&self, count: i64) -> Self {
-        Self::new_unchecked(self.get_u64().wrapping_add_signed(size_of::<T>() as i64 * count))
+        Self::new_unchecked(
+            self.get_u64()
+                .wrapping_add_signed(size_of::<T>() as i64 * count),
+        )
     }
 
     ///Converts the physical Address into a virtual Address via the HHDM
@@ -168,6 +180,7 @@ impl PhysAddress {
 
 ////Wrapper around a u64 that ensures that plattform constrains for the address size are met
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
+#[repr(transparent)]
 pub struct VirtAddress {
     address: NonZeroU64,
 }
@@ -179,14 +192,14 @@ impl VirtAddress {
 
         //Checks if a cannonical bit is used and set
         //Note: Reodering the if branches doesnt decrease the amount of branches on average (currently 2-3-3)
-        if let Some(cannonical_bit_value) = *CANNONICAL_BIT && value.get_bit(cannonical_bit_value as usize){
+        if let Some(cannonical_bit_value) = *CANNONICAL_BIT
+            && value.get_bit(cannonical_bit_value as usize)
+        {
             if masked_value != !*BIT_MASK_VIRT_ADDRESS {
                 return Err(MemoryAddressErrors::NonCannonical);
             }
-
         } else {
             if masked_value != 0 {
-                
                 if (*CANNONICAL_BIT).is_none() {
                     return Err(MemoryAddressErrors::InvalidBits);
                 }
@@ -203,15 +216,16 @@ impl VirtAddress {
     ///masks of unsupported bits
     #[inline]
     pub fn new_maskoff(value: u64) -> Result<Self, MemoryAddressErrors> {
-
         //Checks if a cannonical bit is used and set
-        if let Some(cannonical_bit_value) = *CANNONICAL_BIT && (value as u64).get_bit(cannonical_bit_value as usize){
-
-            return Ok(
-                Self{
-                    address: NonZeroU64::new((value & *BIT_MASK_VIRT_ADDRESS) | !*BIT_MASK_VIRT_ADDRESS).ok_or(MemoryAddressErrors::NULLPTR)?
-                }
-            );
+        if let Some(cannonical_bit_value) = *CANNONICAL_BIT
+            && (value as u64).get_bit(cannonical_bit_value as usize)
+        {
+            return Ok(Self {
+                address: NonZeroU64::new(
+                    (value & *BIT_MASK_VIRT_ADDRESS) | !*BIT_MASK_VIRT_ADDRESS,
+                )
+                .ok_or(MemoryAddressErrors::NULLPTR)?,
+            });
         }
 
         Ok(Self {
@@ -234,19 +248,35 @@ impl VirtAddress {
     }
 
     #[inline]
+    pub fn get_non_zero_u64(&self) -> NonZeroU64 {
+        self.address.into()
+    }
+
+    #[inline]
     pub fn offset<T>(&self, count: i64) -> Result<Self, MemoryAddressErrors> {
-        Self::new(self.get_u64().checked_add_signed(size_of::<T>() as i64 * count).ok_or(MemoryAddressErrors::OutOfBounds)?)
+        Self::new(
+            self.get_u64()
+                .checked_add_signed(size_of::<T>() as i64 * count)
+                .ok_or(MemoryAddressErrors::OutOfBounds)?,
+        )
     }
 
     #[inline]
     pub fn offset_maskoff<T>(&self, count: i64) -> Result<Self, MemoryAddressErrors> {
-        Self::new_maskoff(self.get_u64().checked_add_signed(size_of::<T>() as i64 * count).ok_or(MemoryAddressErrors::OutOfBounds)?)
+        Self::new_maskoff(
+            self.get_u64()
+                .checked_add_signed(size_of::<T>() as i64 * count)
+                .ok_or(MemoryAddressErrors::OutOfBounds)?,
+        )
     }
 
     ///Caller has to ensure that the new address fullfills platform address space constrains
     #[inline]
     pub unsafe fn offset_unchecked<T>(&self, count: i64) -> Self {
-        Self::new_unchecked(self.get_u64().wrapping_add_signed(size_of::<T>() as i64 * count))
+        Self::new_unchecked(
+            self.get_u64()
+                .wrapping_add_signed(size_of::<T>() as i64 * count),
+        )
     }
 
     ///Converts the virtual Address into a physical Address via the HHDM
@@ -285,11 +315,9 @@ impl VirtAddress {
     where
         [(); size_of::<T>()]:,
     {
-        transmute_copy::<[u8; size_of::<T>()], T>(
-            &read_volatile(
-                ( self.get_u64() ) as *const [u8; size_of::<T>()]
-                )
-        )
+        transmute_copy::<[u8; size_of::<T>()], T>(&read_volatile(
+            (self.get_u64()) as *const [u8; size_of::<T>()],
+        ))
     }
 
     ///Performs a volatile Write to virtual Memory \
@@ -304,7 +332,6 @@ impl VirtAddress {
             transmute_copy::<T, [u8; size_of::<T>()]>(value),
         )
     }
-
 }
 
 //Set Bits are allowed to be used including those that have a canonical constrain (x86_64)
@@ -325,6 +352,7 @@ lazy_static! {
 
 //Wrapper that ensures that a address is always aligned to the base page size and a valid address
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
+#[repr(transparent)]
 pub struct PhysLv1PageAddress {
     address: PhysAddress,
 }
@@ -364,18 +392,32 @@ impl PhysLv1PageAddress {
 
     #[inline]
     pub fn offset(&self, count: i64) -> Result<Self, MemoryAddressErrors> {
-        Self::new(self.get_address().get_u64().checked_add_signed(*LV1_PAGE_SIZE as i64 * count).ok_or(MemoryAddressErrors::OutOfBounds)?)
+        Self::new(
+            self.get_address()
+                .get_u64()
+                .checked_add_signed(*LV1_PAGE_SIZE as i64 * count)
+                .ok_or(MemoryAddressErrors::OutOfBounds)?,
+        )
     }
 
     #[inline]
     pub fn offset_maskoff(&self, count: i64) -> Result<Self, MemoryAddressErrors> {
-        Ok(Self::new_maskoff(self.get_address().get_u64().checked_add_signed(*LV1_PAGE_SIZE as i64 * count).ok_or(MemoryAddressErrors::OutOfBounds)?))
+        Ok(Self::new_maskoff(
+            self.get_address()
+                .get_u64()
+                .checked_add_signed(*LV1_PAGE_SIZE as i64 * count)
+                .ok_or(MemoryAddressErrors::OutOfBounds)?,
+        ))
     }
 
     ///Caller has to ensure that the new address fullfills platform address space constrains
     #[inline]
     pub unsafe fn offset_unchecked(&self, count: i64) -> Self {
-        Self::new_unchecked(self.get_address().get_u64().wrapping_add_signed(*LV1_PAGE_SIZE as i64 * count))
+        Self::new_unchecked(
+            self.get_address()
+                .get_u64()
+                .wrapping_add_signed(*LV1_PAGE_SIZE as i64 * count),
+        )
     }
 
     ///Converts the physical Address into a virtual Address via the HHDM
@@ -472,6 +514,7 @@ impl PhysLv1PageAddress {
 
 //Wrapper that ensures that a address is always aligned to the page size one level above the base page size
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
+#[repr(transparent)]
 pub struct PhysLv2PageAddress {
     address: PhysAddress,
 }
@@ -511,18 +554,32 @@ impl PhysLv2PageAddress {
 
     #[inline]
     pub fn offset(&self, count: i64) -> Result<Self, MemoryAddressErrors> {
-        Self::new(self.get_address().get_u64().checked_add_signed(*LV2_PAGE_SIZE as i64 * count).ok_or(MemoryAddressErrors::OutOfBounds)?)
+        Self::new(
+            self.get_address()
+                .get_u64()
+                .checked_add_signed(*LV2_PAGE_SIZE as i64 * count)
+                .ok_or(MemoryAddressErrors::OutOfBounds)?,
+        )
     }
 
     #[inline]
     pub fn offset_maskoff(&self, count: i64) -> Result<Self, MemoryAddressErrors> {
-        Ok(Self::new_maskoff(self.get_address().get_u64().checked_add_signed(*LV2_PAGE_SIZE as i64 * count).ok_or(MemoryAddressErrors::OutOfBounds)?))
+        Ok(Self::new_maskoff(
+            self.get_address()
+                .get_u64()
+                .checked_add_signed(*LV2_PAGE_SIZE as i64 * count)
+                .ok_or(MemoryAddressErrors::OutOfBounds)?,
+        ))
     }
 
     ///Caller has to ensure that the new address fullfills platform address space constrains
     #[inline]
     pub unsafe fn offset_unchecked(&self, count: i64) -> Self {
-        Self::new_unchecked(self.get_address().get_u64().wrapping_add_signed(*LV2_PAGE_SIZE as i64 * count))
+        Self::new_unchecked(
+            self.get_address()
+                .get_u64()
+                .wrapping_add_signed(*LV2_PAGE_SIZE as i64 * count),
+        )
     }
 
     ///Converts the physical Address into a virtual Address via the HHDM
@@ -619,6 +676,7 @@ impl PhysLv2PageAddress {
 
 //Wrapper that ensures that a address is always aligned to the page size two level above the base page size
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
+#[repr(transparent)]
 pub struct PhysLv3PageAddress {
     address: PhysAddress,
 }
@@ -658,18 +716,32 @@ impl PhysLv3PageAddress {
 
     #[inline]
     pub fn offset(&self, count: i64) -> Result<Self, MemoryAddressErrors> {
-        Self::new(self.get_address().get_u64().checked_add_signed(*LV3_PAGE_SIZE as i64 * count).ok_or(MemoryAddressErrors::OutOfBounds)?)
+        Self::new(
+            self.get_address()
+                .get_u64()
+                .checked_add_signed(*LV3_PAGE_SIZE as i64 * count)
+                .ok_or(MemoryAddressErrors::OutOfBounds)?,
+        )
     }
 
     #[inline]
     pub fn offset_maskoff(&self, count: i64) -> Result<Self, MemoryAddressErrors> {
-        Ok(Self::new_maskoff(self.get_address().get_u64().checked_add_signed(*LV3_PAGE_SIZE as i64 * count).ok_or(MemoryAddressErrors::OutOfBounds)?))
+        Ok(Self::new_maskoff(
+            self.get_address()
+                .get_u64()
+                .checked_add_signed(*LV3_PAGE_SIZE as i64 * count)
+                .ok_or(MemoryAddressErrors::OutOfBounds)?,
+        ))
     }
 
     ///Caller has to ensure that the new address fullfills platform address space constrains
     #[inline]
     pub unsafe fn offset_unchecked(&self, count: i64) -> Self {
-        Self::new_unchecked(self.get_address().get_u64().wrapping_add_signed(*LV3_PAGE_SIZE as i64 * count))
+        Self::new_unchecked(
+            self.get_address()
+                .get_u64()
+                .wrapping_add_signed(*LV3_PAGE_SIZE as i64 * count),
+        )
     }
 
     ///Converts the physical Address into a virtual Address via the HHDM
@@ -766,6 +838,7 @@ impl PhysLv3PageAddress {
 
 //Wrapper that ensures that a address is always aligned to the base page size
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
+#[repr(transparent)]
 pub struct VirtLv1PageAddress {
     address: VirtAddress,
 }
@@ -805,18 +878,32 @@ impl VirtLv1PageAddress {
 
     #[inline]
     pub fn offset(&self, count: i64) -> Result<Self, MemoryAddressErrors> {
-        Self::new(self.get_address().get_u64().checked_add_signed(*LV1_PAGE_SIZE as i64 * count).ok_or(MemoryAddressErrors::OutOfBounds)?)
+        Self::new(
+            self.get_address()
+                .get_u64()
+                .checked_add_signed(*LV1_PAGE_SIZE as i64 * count)
+                .ok_or(MemoryAddressErrors::OutOfBounds)?,
+        )
     }
 
     #[inline]
     pub fn offset_maskoff(&self, count: i64) -> Result<Self, MemoryAddressErrors> {
-        Self::new_maskoff(self.get_address().get_u64().checked_add_signed(*LV1_PAGE_SIZE as i64 * count).ok_or(MemoryAddressErrors::OutOfBounds)?)
+        Self::new_maskoff(
+            self.get_address()
+                .get_u64()
+                .checked_add_signed(*LV1_PAGE_SIZE as i64 * count)
+                .ok_or(MemoryAddressErrors::OutOfBounds)?,
+        )
     }
 
     ///Caller has to ensure that the new address fullfills platform address space constrains
     #[inline]
     pub unsafe fn offset_unchecked(&self, count: i64) -> Self {
-        Self::new_unchecked(self.get_address().get_u64().wrapping_add_signed(*LV1_PAGE_SIZE as i64 * count))
+        Self::new_unchecked(
+            self.get_address()
+                .get_u64()
+                .wrapping_add_signed(*LV1_PAGE_SIZE as i64 * count),
+        )
     }
 
     ///Converts the virtual Address into a physical Address via the HHDM
@@ -875,6 +962,7 @@ impl VirtLv1PageAddress {
 
 //Wrapper that ensures that a address is always aligned to the page size one level above the base page size
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
+#[repr(transparent)]
 pub struct VirtLv2PageAddress {
     address: VirtAddress,
 }
@@ -914,18 +1002,32 @@ impl VirtLv2PageAddress {
 
     #[inline]
     pub fn offset(&self, count: i64) -> Result<Self, MemoryAddressErrors> {
-        Self::new(self.get_address().get_u64().checked_add_signed(*LV2_PAGE_SIZE as i64 * count).ok_or(MemoryAddressErrors::OutOfBounds)?)
+        Self::new(
+            self.get_address()
+                .get_u64()
+                .checked_add_signed(*LV2_PAGE_SIZE as i64 * count)
+                .ok_or(MemoryAddressErrors::OutOfBounds)?,
+        )
     }
 
     #[inline]
     pub fn offset_maskoff(&self, count: i64) -> Result<Self, MemoryAddressErrors> {
-        Self::new_maskoff(self.get_address().get_u64().checked_add_signed(*LV2_PAGE_SIZE as i64 * count).ok_or(MemoryAddressErrors::OutOfBounds)?)
+        Self::new_maskoff(
+            self.get_address()
+                .get_u64()
+                .checked_add_signed(*LV2_PAGE_SIZE as i64 * count)
+                .ok_or(MemoryAddressErrors::OutOfBounds)?,
+        )
     }
 
     ///Caller has to ensure that the new address fullfills platform address space constrains
     #[inline]
     pub unsafe fn offset_unchecked(&self, count: i64) -> Self {
-        Self::new_unchecked(self.get_address().get_u64().wrapping_add_signed(*LV2_PAGE_SIZE as i64 * count))
+        Self::new_unchecked(
+            self.get_address()
+                .get_u64()
+                .wrapping_add_signed(*LV2_PAGE_SIZE as i64 * count),
+        )
     }
 
     #[inline]
@@ -983,6 +1085,7 @@ impl VirtLv2PageAddress {
 
 //Wrapper that ensures that a address is always aligned to the page size two level above the base page size
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
+#[repr(transparent)]
 pub struct VirtLv3PageAddress {
     address: VirtAddress,
 }
@@ -1022,18 +1125,32 @@ impl VirtLv3PageAddress {
 
     #[inline]
     pub fn offset(&self, count: i64) -> Result<Self, MemoryAddressErrors> {
-        Self::new(self.get_address().get_u64().checked_add_signed(*LV3_PAGE_SIZE as i64 * count).ok_or(MemoryAddressErrors::OutOfBounds)?)
+        Self::new(
+            self.get_address()
+                .get_u64()
+                .checked_add_signed(*LV3_PAGE_SIZE as i64 * count)
+                .ok_or(MemoryAddressErrors::OutOfBounds)?,
+        )
     }
 
     #[inline]
     pub fn offset_maskoff(&self, count: i64) -> Result<Self, MemoryAddressErrors> {
-        Self::new_maskoff(self.get_address().get_u64().checked_add_signed(*LV3_PAGE_SIZE as i64 * count).ok_or(MemoryAddressErrors::OutOfBounds)?)
+        Self::new_maskoff(
+            self.get_address()
+                .get_u64()
+                .checked_add_signed(*LV3_PAGE_SIZE as i64 * count)
+                .ok_or(MemoryAddressErrors::OutOfBounds)?,
+        )
     }
 
     ///Caller has to ensure that the new address fullfills platform address space constrains
     #[inline]
     pub unsafe fn offset_unchecked(&self, count: i64) -> Self {
-        Self::new_unchecked(self.get_address().get_u64().wrapping_add_signed(*LV3_PAGE_SIZE as i64 * count))
+        Self::new_unchecked(
+            self.get_address()
+                .get_u64()
+                .wrapping_add_signed(*LV3_PAGE_SIZE as i64 * count),
+        )
     }
 
     ///Converts the virtual Address into a physical Address via the HHDM
@@ -1090,7 +1207,7 @@ impl VirtLv3PageAddress {
     }
 }
 
-/* 
+/*
 ///General Purpose Optimized Memory Functions for larger Memory Operations
 
 pub mod utility {
