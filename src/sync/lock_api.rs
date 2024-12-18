@@ -4,7 +4,6 @@ use lock_api::{GuardNoSend, RawMutex, RawRwLock};
 pub struct NullLock();
 
 unsafe impl RawMutex for NullLock {
-    
     const INIT: Self = NullLock();
 
     type GuardMarker = GuardNoSend;
@@ -16,13 +15,11 @@ unsafe impl RawMutex for NullLock {
     }
 
     unsafe fn unlock(&self) {}
-
 }
 
 pub struct NullRwLock();
 
 unsafe impl RawRwLock for NullRwLock {
-    
     const INIT: Self = NullRwLock();
 
     type GuardMarker = GuardNoSend;
@@ -42,5 +39,4 @@ unsafe impl RawRwLock for NullRwLock {
     }
 
     unsafe fn unlock_exclusive(&self) {}
-    
 }

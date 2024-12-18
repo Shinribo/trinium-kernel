@@ -1,7 +1,10 @@
-
-use core::{cell::UnsafeCell, fmt, hint, ops::{Deref, DerefMut}, sync::atomic::{AtomicUsize, Ordering}};
-use crate::hal::interrupt::{IrqLevel, set_irq_level,bump_irq_level};
-
+use crate::hal::interrupt::{bump_irq_level, set_irq_level, IrqLevel};
+use core::{
+    cell::UnsafeCell,
+    fmt, hint,
+    ops::{Deref, DerefMut},
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 pub struct Spinlock<T> {
     ticket_queue: AtomicUsize,
@@ -14,7 +17,6 @@ unsafe impl<T: Send> Sync for Spinlock<T> {}
 unsafe impl<T: Send> Send for Spinlock<T> {}
 
 impl<T> Spinlock<T> {
-    
     #[inline(always)]
     pub const fn new(data: T, new_irqlv: IrqLevel) -> Self {
         Self {
@@ -30,7 +32,6 @@ impl<T> Spinlock<T> {
         self.ticket_queue.load(Ordering::Acquire) - self.ticket_enter.load(Ordering::Acquire)
     }
 
-
     #[inline(always)]
     pub fn is_locked(&self) -> bool {
         self.ticket_queue.load(Ordering::Acquire) != self.ticket_enter.load(Ordering::Acquire)
@@ -39,7 +40,6 @@ impl<T> Spinlock<T> {
     ///Safety: When nesting ensure that the Guards are released in the correct order
     #[inline(always)]
     pub unsafe fn lock(&self) -> SpinlockGuard<T> {
-
         let old_irqlv = unsafe { bump_irq_level(self.required_irqlv) };
 
         //enter queue
@@ -55,10 +55,7 @@ impl<T> Spinlock<T> {
             old_irqlv,
             data: unsafe { &mut *self.data.get() },
         }
-
     }
-
-
 }
 
 pub struct SpinlockGuard<'a, T: 'a> {
@@ -98,8 +95,9 @@ impl<'a, T> Drop for SpinlockGuard<'a, T> {
     /// The dropping of the MutexGuard will release the lock it was created from.
     fn drop(&mut self) {
         unsafe { set_irq_level(self.old_irqlv) };
-        self.ticket_enter.store(self.ticket_enter.load(Ordering::Acquire) + 1, Ordering::Release);
+        self.ticket_enter.store(
+            self.ticket_enter.load(Ordering::Acquire) + 1,
+            Ordering::Release,
+        );
     }
 }
-
-
